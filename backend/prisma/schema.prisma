@@ -1,8 +1,98 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
 datasource db {
   provider = "sqlite"
 }
 
-generator client {
-  provider = "prisma-client"
-  output   = "../generated/prisma"
+enum ExceptionStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+}
+
+enum Severity {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+
+model RawProductionPlan {
+  id             Int      @id @default(autoincrement())
+
+  plan_date      DateTime
+  plant          String
+  sku            String
+  planned_units  Int
+
+  imported_at    DateTime @default(now())
+
+  @@map("raw_production_plan")
+}
+
+model RawActualProduction {
+  id               Int      @id @default(autoincrement())
+
+  // CSV columns (kept exactly as imported)
+  date             DateTime
+  plant_id         String
+  product_code     String
+  units_produced   Int
+
+  imported_at      DateTime @default(now())
+
+  @@map("raw_actual_production")
+}
+
+model ProductionPlan {
+  id             Int      @id @default(autoincrement())
+
+  date           DateTime
+  plant          String
+  product_code   String
+  planned_units  Int
+
+  created_at     DateTime @default(now())
+  updated_at     DateTime @updatedAt
+
+  @@map("production_plan")
+}
+
+model ActualProduction {
+  id              Int      @id @default(autoincrement())
+
+  date            DateTime
+  plant           String
+  product_code    String
+  actual_units    Int
+
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  @@map("actual_production")
+}
+
+model Exception {
+  id                     Int               @id @default(autoincrement())
+
+  date                   DateTime
+  plant                  String
+  product_code           String
+
+  planned_units          Int
+  actual_units           Int
+
+  deficit_units          Int
+  deficit_percentage     Float
+
+  severity               Severity
+  status                 ExceptionStatus  @default(OPEN)
+
+  created_at             DateTime @default(now())
+  updated_at             DateTime @updatedAt
+
+  @@map("exceptions")
 }
