@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Project Walkthrough - Mini Exception Inbox</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background-color: #f9fafb;
+        }
+        h1, h2, h3 {
+            color: #111827;
+        }
+        .section {
+            background: white;
+            border-radius: 8px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+            box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
+        }
+        code {
+            background-color: #f3f4f6;
+            padding: 0.2rem 0.4rem;
+            border-radius: 0.25rem;
+            font-size: 0.875em;
+            color: #ef4444;
+        }
+        pre {
+            background-color: #1f2937;
+            color: #f8fafc;
+            padding: 1rem;
+            border-radius: 0.5rem;
+            overflow-x: auto;
+        }
+        pre code {
+            background-color: transparent;
+            color: inherit;
+            padding: 0;
+        }
+    </style>
+</head>
+<body class="p-8 max-w-5xl mx-auto text-gray-800">
+
+    <header class="mb-10 text-center">
+        <h1 class="text-4xl font-extrabold tracking-tight mb-2">Mini Exception Inbox</h1>
+        <p class="text-lg text-gray-500">Project Walkthrough & Technical Decisions</p>
+        <p class="text-sm font-medium mt-4 text-blue-600">By Vishal Raj</p>
+    </header>
+
+    <div class="section">
+        <h2 class="text-2xl font-bold border-b pb-2 mb-4">1. Demo of the App Working End-to-End</h2>
+        <p class="mb-4">
+            The application is completely containerized. By running a single command, <code>docker compose up --build</code>, the entire ecosystem spins up automatically. 
+        </p>
+        <p class="mb-4">
+            Once started, the backend (Node.js/Express) automatically processes the initial CSV data files through our ETL pipeline, populating the database with raw records, cleaning them, and generating the necessary production exceptions. 
+        </p>
+        <p class="mb-2"><strong>The User Experience:</strong></p>
+        <ul class="list-disc pl-5 space-y-2">
+            <li><strong>Dashboard view:</strong> Planners navigate to the React frontend (running at port 5173). They see a timeline-based inbox where exceptions are grouped by day.</li>
+            <li><strong>Filtering:</strong> Users can filter exceptions by Severity (High, Medium) or by specific Product codes.</li>
+            <li><strong>Interaction:</strong> Clicking on an exception row slides out a detailed drawer panel. This panel displays the planned vs. actual numbers, the deficit percentage, and an interactive Recharts-powered 7-day trend chart.</li>
+            <li><strong>Action:</strong> Planners can change the status of an exception from <code>OPEN</code> to <code>ACKNOWLEDGED</code> or <code>RESOLVED</code> directly from the drawer. This updates the backend via a REST API and refreshes the UI instantly without a page reload using Redux Toolkit.</li>
+        </ul>
+    </div>
+
+    <div class="section">
+        <h2 class="text-2xl font-bold border-b pb-2 mb-4">2. Database Schema & Key Decisions</h2>
+        <p class="mb-4">
+            I decided to use <strong>SQLite</strong> with <strong>Prisma ORM</strong> to keep the setup zero-configuration and lightweight as per the assignment constraints, instead of defaulting to a heavier database like PostgreSQL or MongoDB.
+        </p>
+        <p class="mb-4">
+            Instead of simply having two tables, I designed the database into three logical layers to mimic an enterprise Data Warehouse / ERP structure:
+        </p>
+
+        <h3 class="text-xl font-semibold mt-6 mb-2">The Layers:</h3>
+        <ol class="list-decimal pl-5 space-y-3">
+            <li>
+                <strong>Raw Tables (<code>raw_production_plan</code> & <code>raw_actual_production</code>):</strong><br>
+                Stores the exact, unmodified data from the CSV files. This is crucial for auditing imports and allows us to replay the ETL process if business logic changes.
+            </li>
+            <li>
+                <strong>Clean Tables (<code>production_plan</code> & <code>actual_production</code>):</strong><br>
+                This contains the normalized data after validation and transformation.
+            </li>
+            <li>
+                <strong>Materialized View (<code>exceptions</code>):</strong><br>
+                Instead of calculating deficits dynamically on every API request (which gets slow with large datasets), I materialized the exceptions into their own table. It stores fields like <code>planned_units</code>, <code>actual_units</code>, <code>deficit_units</code>, <code>severity</code>, and <code>status</code>.
+            </li>
+        </ol>
+
+        <h3 class="text-xl font-semibold mt-6 mb-2">Key Decision: Materializing Exceptions</h3>
+        <p>
+            Calculating the exceptions on the fly via SQL JOINs on every page load would negatively impact read performance on the frontend. By executing the calculation logic once during the <em>Load</em> phase of the ETL pipeline and storing it in the <code>exceptions</code> table, the frontend API endpoints just perform simple <code>SELECT</code> queries. This drastically speeds up the dashboard.
+        </p>
+    </div>
+
+    <div class="section">
+        <h2 class="text-2xl font-bold border-b pb-2 mb-4">3. My Process: ETL Pipeline & Data Discoveries</h2>
+        <p class="mb-4">
+            The data ingestion process follows a strict <strong>Extract, Transform, Load (ETL)</strong> pattern handled by custom scripts in the backend.
+        </p>
+
+        <h3 class="text-xl font-semibold mt-6 mb-2">What I Found in the Data</h3>
+        <p class="mb-4">
+            During the <em>Extract</em> phase, my validation script caught a data quality issue in <code>production_plan.csv</code>: <strong>two records contained missing values for planned_units</strong>.
+        </p>
+        <p class="mb-4">
+            Instead of letting the application crash or inserting corrupted `NULL` data into the system, I implemented a fault-tolerant import process:
+            <ul class="list-disc pl-5 mt-2">
+                <li>Every row is strictly validated before insertion.</li>
+                <li>The script logged the specific invalid row numbers.</li>
+                <li>The 2 corrupted rows were skipped, while the other 1,083 valid rows were successfully imported.</li>
+            </ul>
+        </p>
+
+        <h3 class="text-xl font-semibold mt-6 mb-2">Tradeoffs Made</h3>
+        <ul class="list-disc pl-5 space-y-2">
+            <li><strong>SQLite vs PostgreSQL:</strong> I used SQLite because the assignment required a lightweight, easy-to-run setup. The tradeoff is that SQLite handles concurrent writes poorly compared to Postgres, but for an isolated dashboard, it is more than sufficient.</li>
+            <li><strong>Batch Processing vs Real-time:</strong> The ETL script processes CSVs in batches. In a true enterprise scenario, we might use message queues (like Kafka or RabbitMQ) to ingest production updates in real-time, but for this scope, a batch script was a pragmatic tradeoff.</li>
+            <li><strong>AI Assistance vs Hand-Coding:</strong> I heavily utilized AI (GPT-5.5) to scaffold the Prisma boilerplate and UI layouts, allowing me to focus roughly 30% of my time entirely on architectural design, data validation logic, and complex state management, rather than typing out basic CRUD endpoints.</li>
+        </ul>
+    </div>
+
+    <div class="section">
+        <h2 class="text-2xl font-bold border-b pb-2 mb-4">4. What I Would Do Differently (Future Improvements)</h2>
+        <p class="mb-4">
+            Given more development time, I would elevate the project from a solid prototype to a production-ready application by implementing the following:
+        </p>
+        <ul class="list-disc pl-5 space-y-3">
+            <li><strong>Background ETL Workers:</strong> Move the CSV parsing and data ingestion out of blocking scripts and into background jobs using tools like BullMQ or Redis.</li>
+            <li><strong>Authentication & Authorization:</strong> Implement JWT-based login so different planners can have their own accounts, and we can track <em>who</em> resolved an exception in an Audit Log.</li>
+            <li><strong>Real-time UI Updates:</strong> Integrate WebSockets (Socket.io) so that if one planner acknowledges an exception, all other logged-in planners see the status update instantly without needing to refresh their dashboards.</li>
+            <li><strong>Automated Testing:</strong> Add a comprehensive suite of unit and integration tests using Jest and Supertest to ensure the ETL logic never regresses.</li>
+            <li><strong>Server-Side Caching:</strong> Use Redis to cache the dashboard statistics, reducing database hits on the initial dashboard load.</li>
+        </ul>
+    </div>
+
+</body>
+</html>
